@@ -27,14 +27,3 @@ Retrieve the Initial Admin PasswordJenkins locks itself automatically on the fir
 
    TODO
    Setting up a Jenkins agent/node for iOS or macOS builds?
-
-
-# FAQ 
-
-### When a Dockerfile is needed
-You create a Dockerfile only if you want a custom image, for example:
-
-install extra plugins
-add Docker CLI or build tools
-change Jenkins config
-install packages inside the image
