@@ -1,0 +1,45 @@
+version: '3.8'
+
+networks:
+  ai-network:
+    driver: bridge
+
+services:
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    restart: unless-stopped
+    volumes:
+      - ollama_storage:/root/.ollama
+    networks:
+      - ai-network
+    ports:
+      - "11434:11434"
+    # OPTIONAL: Uncomment the lines below if you have an NVIDIA GPU to enable acceleration
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:latest
+    container_name: n8n
+    restart: unless-stopped
+    ports:
+      - "5678:5678"
+    environment:
+      - N8N_SECURE_COOKIE=false # Simplifies local HTTP access
+      - GENERIC_TIMEZONE=UTC
+    volumes:
+      - n8n_storage:/home/node/.n8n
+    networks:
+      - ai-network
+    depends_on:
+      - ollama
+
+volumes:
+  ollama_storage:
+  n8n_storage:
