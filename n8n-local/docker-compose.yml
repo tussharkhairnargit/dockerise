@@ -14,11 +14,14 @@ services:
       - N8N_HOST=localhost
       - N8N_PORT=5678
       - N8N_PROTOCOL=http
-      - GENERIC_TIMEZONE=Asia/Kolkata # Keeps your automation cron-jobs accurate
+      - GENERIC_TIMEZONE=Asia/Kolkata
       - TZ=Asia/Kolkata
-      # ADD THESE TWO LINES TO FIX THE AI CHAT TIMEOUT:
-      - N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS=true
-      - N8N_AI_TIMEOUT=300000  # Increases timeout to 5 minutes
+      
+      # ─── TIME OUT OVERRIDES TO FIX THE ERROR ───
+      - N8N_RUNNERS_MODE=internal            # Forces n8n to execute processes inside the main engine
+      - N8N_AI_TIMEOUT=3600000               # Gives AI calls a 1-hour window if needed
+      - N8N_RUNNERS_TASK_TIMEOUT=300         # Extends the background task limit to 5 minutes
+      
     volumes:
       - n8n_data:/home/node/.n8n
     extra_hosts:

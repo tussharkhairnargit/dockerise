@@ -1,0 +1,141 @@
+version: "3.9"
+
+# -----------------------------------------------------------------------------
+# n8n + Ollama (Gemma 3) + nginx reverse proxy
+# -----------------------------------------------------------------------------
+# - n8n and ollama are NOT exposed directly to the host; only nginx is.
+# - nginx terminates TLS, adds security headers, and (optionally) basic auth.
+# - All services share an internal Docker network; n8n talks to ollama by
+#   its service name ("ollama"), never over the public internet.
+# -----------------------------------------------------------------------------
+
+networks:
+  backend:
+    driver: bridge
+    internal: false   # set true if ollama/n8n never need outbound internet access
+  frontend:
+    driver: bridge
+
+volumes:
+  n8n_data:
+  ollama_data:
+
+services:
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    restart: unless-stopped
+    volumes:
+      - ollama_data:/root/.ollama
+    networks:
+      - backend
+    # No ports published to host on purpose — only reachable from other
+    # containers on the "backend" network (i.e. n8n).
+    environment:
+      - OLLAMA_KEEP_ALIVE=24h
+    deploy:
+      resources:
+        limits:
+          memory: 12G   # Gemma 3 (12b) needs headroom; adjust to your model size
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    # Uncomment to enable GPU acceleration (requires nvidia-container-toolkit)
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+
+  # One-shot helper container that pulls the Gemma 3 model on first start,
+  # then exits. n8n/ollama don't wait on it, but you can `docker compose logs -f ollama-pull`
+  # to watch progress.
+  ollama-pull:
+    image: ollama/ollama:latest
+    container_name: ollama-pull
+    depends_on:
+      ollama:
+        condition: service_healthy
+    networks:
+      - backend
+    entrypoint: ["/bin/sh", "-c"]
+    command: >
+      "until ollama --version >/dev/null 2>&1; do sleep 1; done;
+       OLLAMA_HOST=ollama:11434 ollama pull gemma3:4b &&
+       echo 'Gemma 3 model pulled successfully.'"
+    environment:
+      - OLLAMA_HOST=ollama:11434
+    restart: "no"
+
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:latest
+    container_name: n8n
+    restart: unless-stopped
+    depends_on:
+      - ollama
+    networks:
+      - backend
+      - frontend
+    environment:
+      # --- General ---
+      - N8N_HOST=${N8N_HOST:-localhost}
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=https
+      - NODE_ENV=production
+      - WEBHOOK_URL=${WEBHOOK_URL:-https://localhost/}
+      - GENERIC_TIMEZONE=${TIMEZONE:-UTC}
+
+      # --- Security: n8n's own basic auth (in addition to nginx auth) ---
+      - N8N_BASIC_AUTH_ACTIVE=true
+      - N8N_BASIC_AUTH_USER=${N8N_BASIC_AUTH_USER}
+      - N8N_BASIC_AUTH_PASSWORD=${N8N_BASIC_AUTH_PASSWORD}
+
+      # --- Security: encryption key for credentials at rest (MUST be persisted) ---
+      - N8N_ENCRYPTION_KEY=${N8N_ENCRYPTION_KEY}
+
+      # --- Trust the nginx proxy for correct client IPs / protocol ---
+      - N8N_PROXY_HOPS=1
+
+      # --- Disable telemetry / diagnostics if desired ---
+      - N8N_DIAGNOSTICS_ENABLED=false
+      - N8N_VERSION_NOTIFICATIONS_ENABLED=false
+
+      # --- Ollama connection (used by n8n's Ollama node / HTTP requests) ---
+      - OLLAMA_HOST=ollama
+      - OLLAMA_PORT=11434
+    volumes:
+      - n8n_data:/home/node/.n8n
+    # No ports published — nginx is the only entrypoint.
+    expose:
+      - "5678"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:5678/healthz || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: nginx
+    restart: unless-stopped
+    depends_on:
+      - n8n
+    networks:
+      - frontend
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/certs:/etc/nginx/certs:ro
+      - ./nginx/.htpasswd:/etc/nginx/.htpasswd:ro
+    healthcheck:
+      test: ["CMD", "nginx", "-t"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
